@@ -1,0 +1,138 @@
+---
+title: "Predicting Exercise Type"
+author: "Ramaa Nathan"
+date: "June 21, 2014"
+output: html_document
+---
+```{r setoptions, echo=FALSE}
+require(knitr)
+opts_chunk$set(cache=TRUE)
+```
+
+###  Summary 
+The goal of this machine learning project is  to predict the manner in which an exercise is done. The data for this project came from [Exercise Data](http://groupware.les.inf.puc-rio.br/har). Here, the data was collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Nine degrees of freedom was collected from three accelerometers - gyroscope, acceleraion and magnetometer. There were a total of 19622 observations that were collected. The main task is to find the best machine learning algorithm that gives the best accuracy without overfitting and a very low out of sample error. So, we choose to use the Random Forests algorithm. 
+
+#### Data Download
+<p> First download the training and the testing data </p>
+```{r}
+library(caret)
+# read in the csv files
+if(!file.exists("./data")){dir.create("./data")}
+
+# training data
+trainingFileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(trainingFileUrl,destfile="./data/pml-training.csv",method="curl")
+trainingData<-read.csv("./data/pml-training.csv")
+
+#test file
+testingFileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(testingFileUrl,destfile="./data/pml-testing.csv",method="curl")
+testingData<-read.csv("./data/pml-testing.csv")
+```
+<p>  Original Training Data: Observations: `r nrow(trainingData)`  Variables: `r ncol(trainingData)` </p>
+
+#### Data Cleaning
+<p> One of the first tasks is to clean the data to make it suitable for data analysis. Filter out columns that will not be useful or may hinder the learning process. </p>
+1. Remove columns with many NAs in them -  There seem to be several columns that have valid data only when the time interval changes. These are mainly derived data and not any of the raw input data. So, we can filter out these columns.  
+2. Remove columns of type factor - There are several columns of type factor that have more then 300 levels. The inclusion of these data columns will make the randow forests algorithm to be very computationally intensive and very slow. It is further observed that these data are again dervived data - jurtosis and skewness - which we could choose to ignore for the machine learning and not lose any of the required data.   
+3. Remove closely correlated columns - The first columns contains only the row numbers and seems to have a strong correlation with the columns 'classe'. So, remove column 1.  
+```{r}
+# first, clean the trainingData by removing the columns that have NAs in them - basically choose columns that have no NAs in them
+cleanColumns <- which(unlist(lapply(trainingData,FUN=function(x) {all(!is.na(x))})))
+cleanData <- trainingData[,cleanColumns]
+# filter out columns that are of type factor
+nonFactors <- which(unlist(lapply(cleanData,FUN=function(x) { !is.factor(x)})))
+cleanData <- cleanData[,nonFactors]
+cleanData$classe <- trainingData$classe
+cleanData <- cleanData[,-1] #ignore the column that contains the row numbers
+```
+<p>  Cleaned Original Training Data: Observations: `r nrow(cleanData)`  Variables: `r ncol(cleanData)` </p>
+
+#### Data Partition
+<p> Partition the data into training, testing and validation sets. The validataion data can be used if we decide to stack the algorithms. Otherwise, we could use them as a second testing set - which is what we do here. </p>
+```{r}
+# We will now partition this clean Data into training, testing and validation sets
+inBuild <- createDataPartition(y=cleanData$classe,p=0.7,list=FALSE)
+validation <- cleanData[-inBuild,]; 
+buildData <- cleanData[inBuild,]
+inTrain <- createDataPartition(y=buildData$classe,p=0.7,list=FALSE)
+training <- buildData[inTrain,]
+testing <- buildData[-inTrain,]
+```
+<p>  Partitioned Training Data: Observations: `r nrow(training)`  Variables: `r ncol(training)` </p>
+<p>  Partitioned Testing Data: Observations: `r nrow(testing)`  Variables: `r ncol(testing)` </p>
+<p>  Partitioned Vailidation Data: Observations: `r nrow(validation)`  Variables: `r ncol(validation)` </p>
+
+#### Prediction - Random Forests with Cross-Validation
+<p> One of the problems with random forests is overfitting. One of the ways to avoid this is to use cross-validation while training. We choose to use the k-fold cross validation, with k=2. </p> 
+```{r showtable1, results="asis"}
+# try random forests first
+rfmodel <- train(classe ~ ., data=training, method="rf", trControl = trainControl(method="cv",  number=2) )
+library(xtable)
+rfm<-rfmodel$finalModel
+rfmcmt <- xtable(rfm$confusion)
+paste("Number of trees:",rfm$ntree, " Num Variables at each split:",rfm$mtry)
+print(rfmcmt,type="html")
+```
+
+#### Evaluation of Model using Metrics and Out-of-sample errors
+<p> Given that the predicted data is categorical, the main metrics to be used for evaluation would be Accuracy, Sensitivity, Specificity, Positive Predictive Value and Negative Predictive Value. We could like an Accuracy of at least 96%. These metric evaluations can be easily done using the confusionMatrix against the testing and validation data </p>
+
+```{r showtable2, results="asis"}
+# Determine the accuracy of the model using confusionMatrix
+library(xtable)
+cmft <- confusionMatrix(predict(rfmodel,newdata=testing),testing$classe)
+cmftt <- xtable(cmft$table)
+cmfto <- xtable(matrix(cmft$overall,dimnames=list(names(cmft$overall))))
+cmftc <- xtable(cmft$byClass)
+
+print("Reference Table: Actual vs Predicted")
+print(cmftt,type="html")
+print("Overall Statistics")
+print(cmfto,type="html")
+print("Class Metrics")
+print(cmftc,type="html")
+```
+<p> Statistics of predicting the validation data partition </p>
+```{r showtable3, results="asis"}
+# Determine the accuracy of the model using confusionMatrix
+library(xtable)
+cmfv <- confusionMatrix(predict(rfmodel,newdata=validation),validation$classe)
+cmfvt <- xtable(cmfv$table)
+cmfvo <- xtable(matrix(cmfv$overall,dimnames=list(names(cmfv$overall))))
+cmfvc <- xtable(cmfv$byClass)
+print("Statistics of predicting the validation data partition:")
+print("Reference Table: Actual vs Predicted")
+print(cmfvt,type="html")
+print("Overall Statistics")
+print(cmfvo,type="html")
+print("Class Metrics")
+print(cmfvc,type="html")
+```
+
+
+
+#### Predicting against the 20 samples of test data and write results to a file
+<p> There are 20 test data samples. It is observed that the test data has several columsn taht are of type "logical". All these columns do not contain any meaningful data and most importantly do not match the data types in the training data. So, we need to filter them out first and get a clean set of test data </p>
+```{r}
+cleanTestColumns <- which(unlist(lapply(testingData,FUN=function(x) {!is.logical(x)})))
+cleanTestData <-testingData[,cleanTestColumns]
+
+# test on the given test data
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predict(rfmodel,newdata=cleanTestData))
+```
+
+<p>  Original Testing Data: Observations: `r nrow(testingData)`  Variables: `r ncol(testingData)` </p>
+<p>  Cleaned Testing Data: Observations: `r nrow(cleanTestData)`  Variables: `r ncol(cleanTestData)` </p>
+
+
+#### Conclusion
+<p>Based on all the results presented above, it was determined that the random forests algorithm with a cross validation technique of k-folds provides a highly accurate  algorithm with an accuracy of 99%.  The prediction was tested against two different sets of data  before being applied to the final test data yielding the correct results.</p>
